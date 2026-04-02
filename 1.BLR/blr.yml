@@ -1,0 +1,82 @@
+###########
+# General #
+###########
+library_type: dbs # string - Library type, chose between dbs, 10x, stlfr or tellseq
+cluster_tag: BX # string - SAM-tag to store corrected barcode sequence
+molecule_tag: MI # string - SAM-tag to store molecule index
+sequence_tag: RX # string - SAM-tag to store original barcode sequence
+sample_nr: 1 # integer - Read group identifier and to distiguish barcodes when merging BAM files.
+heap_space: 6 # integer - Memory per core in Gb for heap space max limit
+long_read:
+long_read_type:
+
+#################
+# Preprocessing #
+#################
+# DBS libraries
+h1: CAGTTGATCATCAGCAGGTAATCTGG # string - Leftmost adaptor sequnce in read1, appears before barcode
+h2: CATGACCTCTTGGAACTGTCAGATGTGTATAAGAGACAG # string - Adaptor sequence that appears after barcode and before the insert in read1
+h3: CTGTCTCTTATACACATCT # string - Adaptor sequence that appears after the genomic insert in read1 and read2.
+barcode: BDHVBDHVBDHVBDHVBDHV # string - Barcode sequence in IUPAC DNA bases
+min_count: 1 # integer - Minimum number of reads per barcode to tag reads with barcode
+barcode_max_dist: 2 # integer - Starcode maximum edit distance (Levenshtein distance) to cluster two barcode sequences
+barcode_ratio: 5 # integer - Starcode minimum difference in read count ratio to cluster nodes
+
+# 10x libraries
+barcode_whitelist: # string - Path to 10x barcode whitelist.
+apply_hamming_correction: false # boolean - Apply hamming correction when demultiplexing 10x barcodes. Increases runtime.
+
+# stLFR libraries
+stlfr_adapter: CTGTCTCTTATACACATCT # string - Adaptor sequence for stLFR constructs (from tagmentation)
+
+# TELL-Seq libraries
+tellseq_index: # string - Path to index 1 file containing the 18 bp barcode sequences.
+tellseq_correction: correct_singles # string - Correct TELL-seq reads using mode 'cluster' or 'correct_singles'
+tellseq_barcode: NNHNNYRNNNNYRNNHNN # string - Barcode sequence in IUPAC DNA bases
+
+fastq_bins: 100 # integer - Number of bins to split FASTQ over for ema mapping. To not split --> set to 1 or less.
+
+###########
+# Mapping #
+###########
+genome_reference: /proj/sens2020007/nobackup/references/bwa/genome.fa # string - Path to indexed genomic reference
+known_sites: # string - Comma separated path(s) to databases of known polymorphic sites for base recallibration.
+BQSR: false # boolean - Perform base recallibration. Recommended if variant_caller is gatk
+read_mapper: ema  # string - Mapper, choose between bwa, bowtie2, minimap2, ema or lariat
+ema_optimization: true # boolean - Use read density optimization when mapping with ema.
+
+###################
+# Post processing #
+###################
+chunk_size: 20000000 # integer - Chunk size for parallelization
+contigs_skipped: .*_random|chrM|chrUn_.*|hs37d5|chrEBV # string - Regex pattern for contigs to skip in primary analysis
+skip_bcmerge: false # boolean - Skip merging of overlapping barcodes.
+max_molecules_per_bc: 260 # integer - Max number of molecules per barcode. Set to 0 if not filtering
+window_size: 30000 # integer - Window size used for linking reads by barcodes.
+min_mapq: 20 # integer - Minimum MAPQ to include reads in certain analysis steps.
+
+########################
+# Phasing + SV calling #
+########################
+# Comma separated entries of contigs to phase, should include every diploid chromosome for individual.
+phasing_contigs: chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22,chrX # string
+
+reference_variants: # string - Path to reference variants (preferably indexed) used for phasing, skip to call variants
+phasing_ground_truth: # string - Path to Phased VCF (preferably indexed) used as ground truth for additional phasing statistics.
+variant_caller: deepvariant # string - Call varinats using freebayes, gatk or bcftools (or deepvariant if installed)
+filter_variants: true # boolean - Filter called variants (SNPs and INDELs) using hard_filters before phasing 
+hard_filters: # Excluding conditions and names as comma-separated strings. Multiple filters separated by semicolon.
+  # See https://samtools.github.io/bcftools/bcftools.html#expressions for how to make conditions
+  # Default thresholds partly based on Chen et al. 2019 (doi:10.1101/gr.245126.118)
+  snps: QUAL < 15,lowQUAL
+  indels: QUAL < 15,lowQUAL
+  # Threshold suggested by GATK (see link). Remove hash signs ('#') below to use
+  # https://gatk.broadinstitute.org/hc/en-us/articles/360035531112--How-to-Filter-variants-either-with-VQSR-or-by-hard-filtering)
+  # snps: QD < 2.0,QD2; QUAL < 30.0,QUAL30; SOR > 3.0,SOR3; FS > 60.0,FS60; MQ < 40.0,MQ40; MQRankSum < -12.5,MQRankSum-12.5;ReadPosRankSum < -8.0,ReadPosRankSum-8
+  # indels: QD < 2.0,QD2; QUAL < 30.0,QUAL30; FS > 200.0,FS200; ReadPosRankSum < -20.0,ReadPosRankSum-20
+phase_indels: false # boolean - Phase INDELs along with SNPs
+naibr_path: # string - Path to existing NAIBR repository. If not provided the latest version of the repo will be cloned
+naibr_min_mapq: 40 # integer - Minimum read mapping quality for NAIBR SV calling
+naibr_blacklist: # string - Path to bed file containing regions to skip in NAIBR SV calling
+ideogram_assembly: GRCh38 # string - Human genome assembly used, options are 'GRCh38' and 'GRCh37'.
+long_read_bam: # string - Path to indexed BAM file with PacBio or Oxford Nanopore reads mapped to the same reference genome.

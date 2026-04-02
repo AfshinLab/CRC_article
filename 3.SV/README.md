@@ -57,7 +57,7 @@ do
 done
 ```
 
-Use Python script `add_type.py` to add breakpoint direction information for NAIBR
+Use Python script [add_type.py](add_type.py) to add breakpoint direction information for NAIBR
 
 ```{bash}
 cat P19.linkedsv.candidates.no_type.bedpe | python add_type.py > P19.linkedsv.candidates.bedpe
@@ -244,12 +244,44 @@ do
 done
 ```
 
+<br>
+
+## Haploplot visualization
+For visulaising the selected SVs [haploplot](https://github.com/HSiga/haploplot) was used, with the following parameters:
+
+Example of the running code:
+
+```{bash}
+python haploplot.py -p chr5:19320000-19480000  -s1 ../N18.cram -l1 N18 -s2 ../T18.cram -l2 T18 -c1 FFA382 -w 5000 -r chr5:19384245-19419473 -f 30000 -o P18_del_chr5_ann.png -t del -gff3 sorted.gff3.gz -ref genome.fa 1> sv_del_chr5.log 2>&1 &
+
+python haploplot.py -p chr4:95183000-95352000 -s1 ../N19.cram -l1 N19 -s2 ../T19.cram -l2 T19 -c1 FFA382 -w 5000 -r chr4:95225267-95310030 -f 30000 -o P19_del_chr4_ann.png -t del  -gff3 sorted.gff3.gz -ref genome.fa 1> sv_del_chr4.log 2>&1 &
+
+python haploplot.py -p chr20:38393000-38456000 -s1 ../N19.cram -l1 N19 -s2 ../T19.cram -l2 T19 -c1 FFA382 -w 500 -r chr20:38409153-38440198 -f 500 -o P19_inv_chr20_ann.png -t inv  -gff3 sorted.gff3.gz -ref genome.fa 1> sv_inv_chr20.log 2>&1
+
+wait
+
+```
+
+<br>
+
+## Sashimi plot
+Sashimi plot used in the supplementary was generated using the code [sashimi-plot.py](sashimi-plot.py). 
+
+Example of the running code:
+
+```{bash}
+python sashimi.py --bam1 N18.cram --bam2 T18.cram --l1 N18 --l2 T18 --region chr5:19370000-19435000 --highlight chr5:19384245-19419473,chr5:19375138-19376301 --highlight_color fff6d9 --output sash_P18_del.png --swap_hp bam1 
+```
+  
+<br>
+
 ## Versions
 
 Tool | Link | Version
 --- | --- | ---
 `NAIBR`| https://github.com/pontushojer/NAIBR | v0.5.1
 `LinkedSV` | https://github.com/HSiga/LinkedSV | commit #84186a9 
+`haploplot` | https://github.com/HSiga/haploplot/ | 0.1.0 
 `BCFtools` | | v1.17
 `BEDtools`| |  v2.30.0
 `Truvari` | | v3.2.0
