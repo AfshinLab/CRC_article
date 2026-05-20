@@ -4,7 +4,8 @@ The DBS libraries pre-processing was done using BLR, several libraries were gene
 
 For details on BLR please see https://github.com/AfshinLab/BLR
 
-A representative file for the used YAML file for the run after merging can be seen at [blr.yml](blr.yml)
+A representative file for the used YAML file for the run after merging can be seen at [blr.yml](blr.yml) and the software versions in these runs at [versions.yaml](versions.yaml).
+
 
 <br>
 

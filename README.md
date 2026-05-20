@@ -22,6 +22,7 @@ Reference genome (GRCh38): https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/
 4. [Small (somatic) mutation analysis](4.SM)
     - Lancet
     - Maftools
-
+5. [RNAseq analysis](5.RNA)
+    - R scripts
 
 
