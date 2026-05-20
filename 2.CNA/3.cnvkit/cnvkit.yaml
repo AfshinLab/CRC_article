@@ -1,0 +1,12 @@
+name: cnvkit
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - cnvkit=0.9.10
+  - matplotlib-base=3.7.1
+  - pandas=1.5.3
+  - pysam=0.21.0
+  - snakemake-minimal=7.28.3
+  

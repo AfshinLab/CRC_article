@@ -1,0 +1,1722 @@
+---
+title: "CrC_analysis"
+author: "Humam Siga"
+output: html_document
+chunk_output_type: inline #or console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list=ls())
+library(maftools)
+library(tidyverse)
+library(tidyr)
+library(VennDiagram)
+library(GenVisR)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(biomaRt)
+library(png)
+library(data.table)
+library(ggpmisc)
+library(zoo)
+
+```
+
+########################
+##   Loading files   ##
+########################
+
+#select the file and the wanted regions
+```{r loading Data}
+setwd("/PATH/to/working/directory/")
+
+input_path = "/PATH/to/maffile/"
+
+input_maf = paste0(input_path, "Both.onlyPASS_labled.maf")
+
+noigr = c("Frame_Shift_Del", "Frame_Shift_Ins", "Splice_Site", "Translation_Start_Site",
+                "Nonsense_Mutation","Nonstop_Mutation","In_Frame_Del","In_Frame_Ins","Missense_Mutation",
+                "Intron", "3'Flank", "RNA", "5'Flank",  "3'UTR", "Silent", "5'UTR", "Splice_Region") #"IGR"
+
+everyregion = c(noigr, "IGR")
+
+```
+
+
+#loading maf
+```{r}
+crc_everything = read.maf(maf = input_maf, vc_nonSyn = everyregion)
+crc_noigr = read.maf(maf = input_maf, vc_nonSyn = everyregion)
+
+```
+
+
+```{r}
+#test
+#subsetMaf(crc_everything, genes = "APC")@data
+```
+
+##################################
+##   General data exploratory   ##
+##################################
+
+```{r,}
+#shows clinical data associated with samples
+getClinicalData(crc_noigr)
+#Shows all fields in MAF
+getFields(crc_noigr)
+#Shows sample summary.
+getSampleSummary(crc_everything)
+getSampleSummary(crc_noigr)
+#get variant summary per sample
+crc_everything@variant.type.summary
+crc_noigr@variant.type.summary
+#Shows gene summary.
+head(getGeneSummary(crc_noigr))
+```
+
+
+#Split the samples
+```{r}
+#everything
+crc_eve_p18 <- filterMaf(crc_everything, tsb = "tumor_19") #opposite
+crc_eve_p19 <- filterMaf(crc_everything, tsb = "tumor_18")
+
+# #no igr
+# crc_noigr_p18 <- filterMaf(crc_noigr, tsb = "tumor_19") #opposite
+# crc_noigr_p19 <- filterMaf(crc_noigr, tsb = "tumor_18")
+
+
+maftools::plotmafSummary(crc_eve_p18)
+maftools::plotmafSummary(crc_eve_p19)
+
+
+#adjust color
+names(getSampleSummary(crc_everything))
+
+col = c(RColorBrewer::brewer.pal(12,name = "Paired"),
+      RColorBrewer::brewer.pal(11,name = "Spectral")[1:3],'black', 'violet', 'royalblue', 'darkgreen')
+
+names(col) = names(getSampleSummary(crc_everything))
+
+#Plot mutated genes
+names(col) = names(getSampleSummary(crc_noigr))
+col = col[1:(length(col) - 1)]
+
+#Plot stats
+plotmafSummary(maf = crc_eve_p18 , rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE, color = col, showBarcodes = T)
+plotmafSummary(maf = crc_eve_p19 , rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE, color = col, showBarcodes = T)
+
+
+#Plot types in chromosomes  
+rainfallPlot(crc_eve_p18, ref.build = "hg38")
+rainfallPlot(crc_eve_p19, ref.build = "hg38")
+
+#Optional
+# rainfallPlot(crc_eve_p18, ref.build = "hg38", detectChangePoints = T)
+# rainfallPlot(crc_eve_p19, ref.build = "hg38", detectChangePoints = T)
+
+```
+
+
+#Plot the numbers of mutations
+```{r}
+
+variants_counts <- rbind(crc_eve_p18@variant.type.summary, crc_eve_p19@variant.type.summary)
+
+setnames(variants_counts,old = "SNP", "SNV")
+setnames(variants_counts,old = "DNP", "DNV")
+setnames(variants_counts,old = "TNP", "TNV")
+setnames(variants_counts,old = "ONP", "ONV")
+
+variants_counts <- variants_counts[,-"total"]
+
+variants_counts$Tumor_Sample_Barcode <- c("P18","P19")
+variants_counts <- variants_counts %>% pivot_longer(cols = colnames(variants_counts[,-1]))
+
+#variants_counts <- data.frame(variants_counts, row.names = "Tumor_Sample_Barcode")
+#log(variants_counts, base = 10)
+
+p <-ggplot2::ggplot(data=variants_counts, aes(x=factor(name, levels = c("Total","INS","DEL","ONV","TNV","DNV","SNV") ), y=log(value,base = 10), fill=Tumor_Sample_Barcode)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  coord_flip() +
+  scale_fill_manual(values=c("orange", "lightseagreen")) +
+  labs(fill = "sample", y= "Log10 number of variants", x="Types of variants") +
+  theme_minimal()
+
+p
+```
+
+
+```{r}
+
+p <- ggplot(
+  data = variants_counts, 
+  aes(
+    x = factor(name, levels = c("Total","INS","DEL","ONV","TNV","DNV","SNV")), 
+    y = log10(value), 
+    fill = Tumor_Sample_Barcode
+  )
+) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  
+  # Refined color palette (clean, modern)
+  scale_fill_manual(values = c("#3B82F6","#E11D48")) +
+  
+  labs(
+    fill = "Sample",
+    x = "Variant Type",
+    y = expression(Log[10]~"Variant Count"),
+   # title = "Variant Counts Across Samples",
+   # subtitle = "Log10-transformed values for improved visualization"
+  ) +
+  
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold", size = 14),
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12, color = "gray30"),
+    legend.position = "right",
+    legend.title = element_text(face = "bold")
+  )
+
+p
+```
+
+
+#save_plot
+```{r}
+ggsave(plot = p, filename = "new_fig4_A.svg", width = 1500, height = 1600,
+       limitsize = F, units = "px")
+
+```
+
+
+#Plot the type of mutations
+```{r}
+#plot titv
+crc_everything.titv = titv(maf = crc_everything, plot = FALSE, useSyn = TRUE)
+crc_everything.titv$fraction.contribution
+
+#plot titv summary
+fraction_plot <- crc_everything.titv$fraction.contribution
+fraction_plot$Tumor_Sample_Barcode <- c("P18","P19")
+fraction_plot <- fraction_plot %>%
+  pivot_longer(cols = colnames( crc_everything.titv$fraction.contribution[,-1]))
+
+#order as in P18
+order_series <-  fraction_plot %>% filter(Tumor_Sample_Barcode=="P18") %>% 
+                    dplyr::arrange(value) %>% dplyr::select(name)
+
+
+p <- ggplot2::ggplot(data=fraction_plot, aes(x=factor(name, levels =  order_series$name ), y = value,  fill=Tumor_Sample_Barcode)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_fill_manual(values=c("orange", "lightseagreen")) +
+  labs(fill = "sample", x= "SNV class", y="% of SNV") +
+  coord_flip() +
+  theme_minimal()
+
+p
+
+
+```
+
+#new_and_save_plot
+```{r}
+p <- ggplot(
+  data = fraction_plot,
+  aes(
+    x = factor(name, levels = order_series$name),
+    y = value,
+    fill = Tumor_Sample_Barcode
+  )
+) +
+  geom_bar(
+    stat = "identity",
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  coord_flip() +
+
+  # More refined and modern colors
+  scale_fill_manual(values = c("#3B82F6","#E11D48")) +
+
+  labs(
+    fill = "Sample",
+    x = "SNV Class",
+    y = "% of SNVs",
+    #title = "Fraction of SNV Classes per Sample"
+  ) +
+
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold", size = 14),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.title = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+p
+ggsave(plot = p, filename = "new_fig4_B.svg", width = 1500, height = 1600,
+        limitsize = F, units = "px")
+
+```
+
+
+########################
+##   Pathways ploths  ##
+########################
+
+```{r}
+#top mutated
+oncoplot(maf = crc_everything, top = 20, colors = col)
+
+# Plot Pathways every
+pws = pathways(maf = crc_everything, plotType = "bar")
+pws18 = pathways(maf = crc_eve_p18, plotType = "bar")
+pws19 = pathways(maf = crc_eve_p19, plotType = "bar")
+
+maftools:::get_pw_summary(maf = crc_eve_p19  )
+
+pathways_names = pws[,c(1,2)]
+pws18 <- merge(pathways_names, pws18[,-"N"], by="Pathway", all=T)
+pws19 <- merge(pathways_names, pws19[,-"N"], by="Pathway", all=T)
+
+pws18[is.na(pws18)] <- 0
+pws19[is.na(pws19)] <- 0
+
+#oncoplot(maf = crc_eve_p18, pathways = "sigpw", selectedPathways = "WNT")
+#oncoplot(maf = crc_eve_p19, pathways = "sigpw", selectedPathways = "WNT")
+
+# # Adjust to pathway plotting
+# genescol = RColorBrewer::brewer.pal(n = 8, name = 'Paired')
+# genescol = rep("darkred", 8)
+# 
+# oncoplot(maf = crc_everything, pathways = "sigpw", selectedPathways = "RTK-RAS",  
+#          drawColBar = F, drawRowBar = F, removeNonMutated = F, showPct=F,
+#          colors = genescol, fill=T, showTumorSampleBarcodes=T,
+#          sampleOrder=c("tumor_18","tumor_19"))#,titleText = "RTK-RAS Pathway")
+
+#To plot both with the same order
+plot_bar_pathways <- function (maf, altered_pws , plotType = "bar",
+                               panelWidths = c(2, 4, 4), col = "#f39c12", pathdb = "sigpw", fontSize = 1 )
+  {
+            altered_pws <- altered_pws[order(altered_pws$Pathway)]
+            nsamps = as.numeric(maf@summary[ID == "Samples", 
+                summary])
+            lo = layout(mat = matrix(c(1, 2, 3), ncol = 3, nrow = 1), 
+                widths = panelWidths)
+            par(mar = c(2, 2, 2, 0))
+            plot(NA, xlim = c(0, 1), ylim = c(0, nrow(altered_pws)), 
+                axes = FALSE)
+            text(x = 1, y = seq(0.5, nrow(altered_pws), by = 1), 
+                labels = altered_pws$Pathway, adj = 1, xpd = TRUE, 
+                cex = fontSize)
+            title(main = "Pathway", adj = 0)
+            par(mar = c(2, 0, 2, 1), xpd = TRUE)
+            plot(NA, xlim = c(0, 1.2), ylim = c(0, nrow(altered_pws)), 
+                axes = FALSE)
+            rect(xleft = 0, ybottom = seq(0.1, nrow(altered_pws), 
+                by = 1), xright = 1, ytop = seq(0.2, nrow(altered_pws), 
+                by = 1) + 0.7, col = "#ecf0f1", border = "white")
+            rect(xleft = 0, ybottom = seq(0.1, nrow(altered_pws), 
+                by = 1), xright = altered_pws$fraction_affected, 
+                ytop = seq(0.2, nrow(altered_pws), by = 1) + 
+                  0.7, col = col, border = "white")
+            text(x = 1.05, y = seq(0.5, nrow(altered_pws), by = 1), 
+                labels = paste0(altered_pws$n_affected_genes, 
+                  "/", altered_pws$N), adj = 0, cex = fontSize)
+            axis(side = 1, at = seq(0, 1, 0.25), line = -1, cex.axis = fontSize)
+            title(main = "Fraction of pathway affected", adj = 0)
+            # par(mar = c(2, 0, 2, 1), xpd = TRUE)
+            # plot(NA, xlim = c(0, 1.2), ylim = c(0, nrow(altered_pws)), 
+            #     axes = FALSE)
+            # rect(xleft = 0, ybottom = seq(0.1, nrow(altered_pws), 
+            #     by = 1), xright = 1, ytop = seq(0.2, nrow(altered_pws), 
+            #     by = 1) + 0.7, col = "#ecf0f1", border = "white")
+            # rect(xleft = 0, ybottom = seq(0.1, nrow(altered_pws), 
+            #     by = 1), xright = altered_pws$Fraction_mutated_samples, 
+            #     ytop = seq(0.2, nrow(altered_pws), by = 1) + 
+            #       0.7, col = col, border = "white")
+            # text(x = 1.05, y = seq(0.5, nrow(altered_pws), by = 1), 
+            #     labels = paste0(altered_pws$Mutated_samples, 
+            #       "/", nsamps), adj = 0, cex = fontSize)
+            # axis(side = 1, at = seq(0, 1, 0.25), line = -1, cex.axis = fontSize)
+            # title(main = "Fraction of samples affected")
+        }
+plot_bar_pathways(maf = crc_eve_p18, altered_pws =  pws18)
+
+plot_bar_pathways(maf = crc_eve_p19, altered_pws =  pws19)
+```
+
+
+#Final plot pathways, in both patients together
+```{r}
+pws18$sample <- "P18"
+pws19$sample <- "P19"
+
+pws_both <- rbind(pws18, pws19)
+
+pws_both <- pws_both %>% pivot_longer(cols = colnames(pws_both[,4]))
+
+p <-ggplot2::ggplot(data=pws_both, aes(x=paste0(Pathway," (",N,")"), y=value, fill=sample)) +
+  geom_bar(stat="identity", position=position_dodge(), width = 0.9) +
+  coord_flip() +
+  geom_text(aes(label=replace(n_affected_genes, n_affected_genes == 0 , "")),hjust = 1.3, position=position_dodge(width = 0.9)) +
+  scale_fill_manual(values=c("orange", "lightseagreen")) +
+  labs(fill = "sample", y= "Fraction of the pathway affected", x= "Pathway (number of genes)") +
+  scale_y_continuous(breaks=seq(0, 1, .1), limits = c(0,0.7)) +
+  theme_minimal() #+
+ # theme(axis.text = element_text(size = 2)) 
+p
+
+# ggsave(plot = p, filename = "fig4_B.svg", width = 2500, height = 2000, limitsize = F,
+#       units = "px")
+
+```
+
+#Modified plot
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+pws_both2 <- pws_both %>%
+  mutate(Pathway_lbl = paste0(Pathway, " (", N, ")"))
+
+pws_both_complete <- pws_both2 %>%
+  complete(
+    Pathway_lbl,
+    sample,
+    fill = list(value = 0, n_affected_genes = 0)
+  )
+
+
+#plotting
+p <- ggplot(
+  data = pws_both_complete,
+  aes(
+    x = factor(Pathway_lbl),
+    y = value,
+    fill = sample
+  )
+) +
+  geom_bar(
+    stat = "identity",
+    width = 0.7,
+    position = position_dodge(width = 0.8, preserve="single")
+  ) +
+  coord_flip() +
+
+  # Label n_affected_genes but hide zeros
+  geom_text(
+    aes(
+      label = ifelse(n_affected_genes == 0, "", n_affected_genes)
+    ),
+    position = position_dodge(width = 0.8),
+    hjust = -0.2,
+    size = 3.2,
+    color = "black"
+  ) +
+
+  # Modern colors (matching your earlier plots)
+  scale_fill_manual(values = c("P18" = "#3B82F6", "P19" = "#E11D48")) +
+
+  scale_y_continuous(
+    breaks = seq(0, 1, 0.1),
+    limits = c(0, 0.7),
+    expand = c(0, 0)
+  ) +
+
+  labs(
+    fill = "Sample",
+    x = "Pathway (number of genes)",
+    y = "Fraction of pathway affected",
+   # title = "Pathway Alteration Comparison",
+   # subtitle = "Fraction of altered genes per pathway in P18 vs P19"
+  ) +
+
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(face = "bold"),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold", size = 14),
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12, color = "gray30"),
+    legend.position = "right",
+    legend.title = element_text(face = "bold")
+  )
+
+p
+
+ggsave(plot = p, filename = "new_fig4_C.svg", width = 2500, height = 2000, limitsize = F,
+      units = "px")
+```
+
+
+
+```{r}
+# Here to extract genes from pathways
+# pathway name	Gene	no_mut_p18	no_mut_p19
+# KRAS			
+# 	gene1	4	3
+# 	gene2	2	5
+# TP53			
+# 	gene1	5	4
+# 	gene2	2	2
+
+
+pw18 <- maftools:::get_pw_summary(maf = crc_eve_p18, pathways = "sigpw")
+pw19 <- maftools:::get_pw_summary(maf = crc_eve_p19, pathways = "sigpw")
+
+genes_list <- attr(pw18, "genes")  # same for P18 and P19
+
+
+count_mutations <- function(maf, gene_list) {
+  maf_genes <- maf@data %>% dplyr::count(Hugo_Symbol, name = "mut_count")
+  maf_genes <- as.data.frame(maf_genes)
+
+  # Keep only genes in this pathway
+  maf_genes <- maf_genes %>% 
+    dplyr::filter(Hugo_Symbol %in% gene_list)
+
+  # Return named vector: Gene → count
+  counts <- setNames(maf_genes$mut_count, maf_genes$Hugo_Symbol)
+
+  return(counts)
+}
+  
+results <- list()
+
+for (pw in names(genes_list)) {
+    genes <- genes_list[[pw]]
+
+    # Count mutations in each sample
+    c18 <- count_mutations(crc_eve_p18, genes)
+    c19 <- count_mutations(crc_eve_p19, genes)
+
+    # Put into a table
+    df <- data.frame(
+        Pathway = pw,
+        Gene = genes,
+        no_mut_P18 = c18[genes],
+        no_mut_P19 = c19[genes],
+        stringsAsFactors = FALSE
+    )
+
+    # Replace NA with 0
+    df[is.na(df)] <- 0
+
+    results[[pw]] <- df
+}
+
+final_table <- do.call(rbind, results)
+final_table <- final_table %>% filter(no_mut_P18 + no_mut_P19 > 0)
+
+final_table
+
+```
+
+
+##################################
+##   Haplotypes analysis   ##
+##################################
+
+
+```{R}
+# #High score#
+crc_eve_hs_p18 <- subsetMaf(crc_eve_p18, query = "HPST>=30")
+crc_eve_hs_p19 <- subsetMaf(crc_eve_p19, query = "HPST>=30")
+
+# #percentage of high-score phased variants
+crc_eve_hs_p18@variant.type.summary$total / crc_eve_p18@variant.type.summary$total
+crc_eve_hs_p19@variant.type.summary$total / crc_eve_p19@variant.type.summary$total
+
+# rainfallPlot(crc_eve_hs_p18, ref.build = "hg38")
+# rainfallPlot(crc_eve_hs_p19, ref.build = "hg38")
+
+```
+
+
+
+```{r}
+#function to add HP numbere based on t_HPA number
+
+add_HP_to_maf <- function(maf, min_HPST=30) {
+
+#  maf <- subsetMaf(maf, query = paste0("HPST>=", min_HPST))
+  
+      #function for the allele counts per mutation
+    commas_to_cols <- function(df, wanted_col = "t_HPA") {
+      wanted = data.frame(base::do.call(rbind, strsplit(df$t_HPA, ",")))
+      wanted = apply(wanted, 2, function(x) as.numeric(as.character(x)))
+      return(wanted)
+    }
+  
+  #making empty column
+  maf@data$HP = 0
+  maf@maf.silent <- cbind(maf@maf.silent, data.table(HP=NA))
+  
+  hp1_line  <- ((commas_to_cols(maf@data, 't_HPA')[,2] - commas_to_cols(maf@data, 't_HPA')[,1]) <  0) & (maf@data$HPST >= min_HPST)
+  hp2_line  <- ((commas_to_cols(maf@data, 't_HPA')[,2] - commas_to_cols(maf@data, 't_HPA')[,1]) >  0) & (maf@data$HPST >= min_HPST)
+  
+  maf@data$HP[hp1_line] = "1"
+  maf@data$HP[hp2_line] = "2"
+  
+  return(maf)
+    
+}
+
+crc_hs_p18 = add_HP_to_maf(crc_eve_hs_p18)
+crc_hs_p18_hp1 <- subsetMaf(crc_hs_p18, query = "HP==1")
+crc_hs_p18_hp2 <- subsetMaf(crc_hs_p18, query = "HP==2")
+
+# rainfallPlot(crc_hs_p18_hp1, ref.build = "hg38", detectChangePoints = T)
+# rainfallPlot(crc_hs_p18_hp2, ref.build = "hg38", detectChangePoints = T)
+# rainfallPlot(crc_hs_p18, ref.build = "hg38", detectChangePoints = T)
+
+
+crc_hs_p19 = add_HP_to_maf(crc_eve_hs_p19)
+crc_hs_p19_hp1 <- subsetMaf(crc_hs_p19, query = "HP==1")
+crc_hs_p19_hp2 <- subsetMaf(crc_hs_p19, query = "HP==2")
+# rainfallPlot(crc_hs_p19_hp1, ref.build = "hg38", detectChangePoints = T)
+# rainfallPlot(crc_hs_p19_hp2, ref.build = "hg38", detectChangePoints = T)
+# rainfallPlot(crc_hs_p19, ref.build = "hg38", detectChangePoints = T)
+
+#Save the maf data
+# maftools::write.mafSummary(crc_hs_p18_hp1,"saved_mafs/crc_hs_p18_hp1")
+# maftools::write.mafSummary(crc_hs_p18_hp2,"saved_mafs/crc_hs_p18_hp2")
+# maftools::write.mafSummary(crc_hs_p19_hp1,"saved_mafs/crc_hs_p19_hp1")
+# maftools::write.mafSummary(crc_hs_p19_hp2,"saved_mafs/crc_hs_p19_hp2")
+```
+
+
+```{r}
+# Here to extract 
+# pathway name	Gene	P18_no_mutation (HP1,2)*	P19_no_mutation (HP1,2)
+# KRAS			
+# 	gene1	4 (3,1)	1 (1,0)
+# 	gene2	3 (2,1)	4 (1,2)
+# TP53			
+# 	gene1	4 (3,1)	4 (2,2)
+# 	gene2	3 (2,1)	5 (3,1)
+
+maf18 <- add_HP_to_maf(crc_eve_p18)
+maf19 <- add_HP_to_maf(crc_eve_p19)
+
+pw18 <- maftools:::get_pw_summary(maf18, pathways="sigpw")
+genes_list <- attr(pw18, "genes")
+
+count_hp_mutations <- function(maf, gene_list) {
+  
+  df <- maf@data %>% 
+    dplyr::filter(Hugo_Symbol %in% gene_list)
+  
+  # Total mutation count
+  total <- df %>%
+    dplyr::count(Hugo_Symbol, name="total") %>%
+    tibble::column_to_rownames("Hugo_Symbol")
+  
+  # HP1 mutation count
+  hp1 <- df %>%
+    dplyr::filter(HP == "1") %>%
+    dplyr::count(Hugo_Symbol, name="hp1") %>%
+    tibble::column_to_rownames("Hugo_Symbol")
+  
+  # HP2 mutation count
+  hp2 <- df %>%
+    dplyr::filter(HP == "2") %>%
+    dplyr::count(Hugo_Symbol, name="hp2") %>%
+    tibble::column_to_rownames("Hugo_Symbol")
+  
+  # combine
+  all_genes <- gene_list
+  
+  result <- data.frame(
+    Gene = all_genes,
+    total = total[all_genes, "total"],
+    hp1   = hp1[all_genes, "hp1"],
+    hp2   = hp2[all_genes, "hp2"],
+    stringsAsFactors = FALSE
+  )
+  
+  result[is.na(result)] <- 0
+  return(result)
+}
+
+
+all_results <- list()
+
+for (pw in names(genes_list)) {
+    genes <- genes_list[[pw]]
+    
+    # counts for P18
+    c18 <- count_hp_mutations(maf18, genes)
+    
+    # counts for P19
+    c19 <- count_hp_mutations(maf19, genes)
+    
+    # merge side-by-side
+    df <- data.frame(
+        Pathway = pw,
+        Gene = genes,
+        P18_no_mut = c18$total,
+        P18_HP1 = c18$hp1,
+        P18_HP2 = c18$hp2,
+        P19_no_mut = c19$total,
+        P19_HP1 = c19$hp1,
+        P19_HP2 = c19$hp2,
+        stringsAsFactors = FALSE
+    )
+    
+    all_results[[pw]] <- df
+}
+
+final_table <- do.call(rbind, all_results)
+
+
+#reformat
+final_table$P18_formatted <- sprintf("%d (%d,%d)", 
+                                     final_table$P18_no_mut,
+                                     final_table$P18_HP1,
+                                     final_table$P18_HP2)
+
+final_table$P19_formatted <- sprintf("%d (%d,%d)", 
+                                     final_table$P19_no_mut,
+                                     final_table$P19_HP1,
+                                     final_table$P19_HP2)
+
+final_table <- final_table %>% filter(P18_no_mut + P19_no_mut > 0) %>% 
+                          dplyr::select(c(Pathway, Gene,P18_formatted, P19_formatted))
+
+write.csv(final_table , row.names = F, file = "pathway_hp_genes.csv")
+```
+
+```{r}
+
+final_table_counts <- do.call(rbind, all_results)
+
+
+
+final_table_counts <- final_table_counts %>% filter(P18_no_mut + P19_no_mut > 0) %>% 
+                          dplyr::select(c(Pathway, Gene,P18_no_mut, P19_no_mut)) %>%
+                          arrange(desc(Pathway))
+write.csv(final_table_counts , row.names = F, file = "pathway_counts_genes.csv")
+
+
+```
+
+
+#Check consecutive mutations on the same allele (HMR analysis)
+
+# MY function 3, with merging windows no rolling
+```{r}
+mutation_dens <- function (maf, mut_window = 5, average_distance = 1000,
+                           merge_overlapped_windows = T) {
+  
+ # tt <- maf@data %>% filter (Variant_Type=="SNP") %>% 
+  tt <- maf@data %>% 
+    dplyr::select(c(Chromosome, Start_Position, End_Position))
+  
+  tiling <- split(tt, tt$Chromosome)
+
+
+average_nMut_per_bp <- function(tiling, nMut = mut_window) {
+      #take the starting position 
+      tiling <- tiling  %>% dplyr::select(c(Chromosome, Start_Position, End_Position))
+      newends <- tiling$End_Position
+      #remove n-1 ends from the newend list
+      newends <- newends[-(1:nMut-1)]
+      #make the vector same length and fill NA last n-1
+      length(newends) <- length(tiling$Start_Position)
+      tiling$newend <- newends+1
+      tiling$width <- newends-tiling$Start_Position 
+      tiling$average_mut_per_window <- tiling$width/nMut
+      return(tiling)
+    }
+
+#count windows 
+kloci = lapply(tiling, average_nMut_per_bp)
+
+#merge chrs
+kloci = data.table::rbindlist(l = kloci, fill = TRUE, use.names = TRUE)
+
+
+if(nrow(kloci)==0){
+  print("Not hits found")
+  return(0)
+}
+
+#order
+chr_order <- paste0("chr", c((1:22),"X","Y"))
+kloci$Chromosome <- factor(kloci$Chromosome, levels=chr_order)
+kloci <- kloci[order(kloci$Chromosome),]
+kloci <- kloci[,-"End_Position"]
+
+#filter lengths
+kloci <- kloci %>% filter(average_mut_per_window <= average_distance)
+
+if (merge_overlapped_windows) {
+ 
+  kloci <- makeGRangesFromDataFrame(kloci, seqnames.field = "Chromosome",
+                         start.field = "Start_Position",
+                         end.field = "newend",
+                         keep.extra.columns = F)
+  kloci = GenomicRanges::reduce(kloci)
+
+  tt <- makeGRangesFromDataFrame(tt, seqnames.field = "Chromosome",
+                           start.field = "Start_Position",
+                           end.field = "End_Position",
+                           keep.extra.columns = T) 
+  
+  #calculate the number of overlapping mutations
+  kloci$num_of_mutations <- countOverlaps(kloci,tt)
+  kloci$average_mut_per_window <-  BiocGenerics::width(kloci) / kloci$num_of_mutations 
+
+return(data.frame(kloci))
+} else {
+  return(kloci)
+}
+
+}
+
+
+```
+
+
+# original kataegis function
+```{r}
+# 
+# detect_kataegis_chr <- function (chr.dat, num_of_mut=6, avg_mut_dis=1000)
+# {
+#   print(paste0("new func numM=",num_of_mut, "avg_mut_dis=",avg_mut_dis))
+#   chr.dat[, `:=`(row_idx, 1:nrow(chr.dat))]
+#   start_idx = 1
+#   end_idx = num_of_mut
+#   queue = chr.dat[start_idx:end_idx]
+#   kat_loc = data.table::data.table()
+#   kat_id = 1
+#   while (end_idx <= nrow(chr.dat)) {
+#     if (mean(diff(queue[, Start_Position], na.rm = TRUE),
+#       na.rm = TRUE) > avg_mut_dis) {
+#       start_idx = start_idx + 1
+#       end_idx = end_idx + 1
+#       queue = chr.dat[start_idx:end_idx]
+#     }
+#     else {
+#       while (mean(diff(queue[, Start_Position], na.rm = TRUE),
+#         na.rm = TRUE) <= avg_mut_dis & end_idx <= nrow(chr.dat)) {
+#         end_idx = end_idx + 1
+#         queue = chr.dat[start_idx:end_idx]
+#       }
+#       x = chr.dat[(start_idx):c(end_idx - 1)]
+#       ycp = data.table::data.table(Chromosome = unique(as.numeric(as.character(x[,
+#         Chromosome]))), Start_Position = x[, min(Start_Position)],
+#         End_Position = x[, max(Start_Position)], nMuts = nrow(x),
+#         Avg_intermutation_dist = mean(x[, diff(Start_Position)]))
+#       ycp[, `:=`(Size, End_Position - Start_Position)]
+#       ycp = cbind(ycp, data.table::dcast(data = x[, .N,
+#         .(con.class, Tumor_Sample_Barcode)], Tumor_Sample_Barcode ~
+#         con.class, value.var = "N"))
+#       kat_loc = data.table::rbindlist(l = list(kat_loc,
+#         ycp), fill = TRUE, use.names = TRUE)
+#       start_idx = end_idx
+#       end_idx = end_idx + num_of_mut
+#       queue = chr.dat[(start_idx):(end_idx)]
+#     }
+#   }
+#   kat_loc
+# }
+# 
+# environment(rainfallPlot) <- asNamespace('maftools')
+# environment(detect_kataegis_chr) <- asNamespace('maftools')
+# assignInNamespace("detect_kataegis_chr", detect_kataegis_chr, ns = "maftools")
+
+```
+
+
+```{r}
+
+#mutation_dens(crc_eve_p18, mut_window = 3, average_distance = 1000)
+HMR_18 <- mutation_dens(crc_hs_p18, mut_window = 3, average_distance = 20000, merge_overlapped_windows = T)
+
+mutation_dens(crc_hs_p18_hp1, mut_window = 3, average_distance = 20000)
+mutation_dens(crc_hs_p18_hp2, mut_window = 3, average_distance = 20000)
+
+#mutation_dens(crc_eve_p19, mut_window = 3, average_distance = 1000)
+HMR_19 <- mutation_dens(crc_hs_p19, mut_window = 3, average_distance = 20000, merge_overlapped_windows = T)
+mutation_dens(crc_hs_p19_hp1, mut_window = 3, average_distance = 20000)
+mutation_dens(crc_hs_p19_hp2, mut_window = 3, average_distance = 20000)
+
+write.csv(HMR_18, file = "HMRs_18.csv", quote = F)
+write.csv(HMR_19, file = "HMRs_19.csv", quote = F)
+```
+
+
+
+########################
+##   Load no IGR      ##
+########################
+
+```{r}
+
+crc_noigr   = read.maf(maf = input_maf, vc_nonSyn = noigr)
+
+
+crc_noigr_p18 <- filterMaf(crc_noigr, tsb = "tumor_19" ) #opposite
+crc_noigr_p19 <- filterMaf(crc_noigr, tsb = "tumor_18")
+
+crc_noigr_hs_p18 <- subsetMaf(crc_noigr_p18, query = "HPST>=30")
+crc_noigr_hs_p19 <- subsetMaf(crc_noigr_p19, query = "HPST>=30")
+
+
+```
+
+
+########################
+##   General Plots    ##
+########################
+
+```{r, echo=False}
+#set colors per gene loci
+col = c(RColorBrewer::brewer.pal(12,name = "Paired"),
+        RColorBrewer::brewer.pal(11,name = "Spectral")[1:3],'black', 'violet', 'royalblue', '#7b7060')
+col = grDevices::adjustcolor(col = col, alpha.f = 0.5)
+names(col) = names(getSampleSummary(crc_noigr))
+col = col[1:(length(col) - 4)]
+
+#mafbarplot(maf = crc, n = 20, color = col)
+
+plotmafSummary(maf = crc_noigr , rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE, color = col,showBarcodes = T)
+
+```
+
+
+
+########################
+## Haplotypes filter ##
+########################
+
+```{r}
+#check filter per sample
+crc_18 <- filterMaf(crc_noigr, tsb = "tumor_19") #opposite
+crc_19 <- filterMaf(crc_noigr, tsb = "tumor_18")
+
+plot(y = 1:length(sort(crc_noigr_p18@data$HPST)), x= sort(crc_noigr_p18@data$HPST), main = "Gene associated SMs filtration P18", 
+     ylab="Somatic Mutations", xlab = "Phred-scaled p-value in tumor (HPST)",  pch = 16 )
+abline(v = 30, col = "red")
+text(45, 1500, "HPST >= 30")
+grid(col = "lightgray")
+```
+
+
+```{r}
+plot(y = 1:length(sort(crc_noigr_p19@data$HPST)), x= sort(crc_noigr_p19@data$HPST), main = "Gene associated SMs filtration P19", 
+     ylab="Somatic Mutations", xlab = "Phred-scaled p-value in tumor (HPST)",  pch = 16 )
+abline(v = 30, col = "red")
+text(52, 2000, "HPST >= 30")
+grid(col = "lightgray")
+
+
+```
+
+#########################################
+###    Split samples high scores      ###
+#########################################
+
+```{r}
+
+mut_18_hs <- crc_noigr_hs_p18 #opposite
+mut_19_hs <- crc_noigr_hs_p19
+
+
+#test one gene
+gene_symbol = "APC"
+mut_18_hs@data[mut_18_hs@data$Hugo_Symbol==gene_symbol,][,c("Start_Position", "Variant_Classification",
+                                                "t_depth","t_HPR", "t_HPA", "n_depth","n_HPR", "n_HPA", "HPST")]
+mut_19_hs@data[mut_19_hs@data$Hugo_Symbol==gene_symbol,][,c("Start_Position", "Variant_Classification",
+                                                "t_depth","t_HPR", "t_HPA", "n_depth","n_HPR", "n_HPA", "HPST")]
+
+maftools::lollipopPlot(mut_19_hs, gene = "APC",  AACol = 'HGVSp_Short')
+
+```
+
+#############################
+###  dups_genes analysis ###
+#############################
+
+```{r}
+keep_only_dups <- function (maf_file) {
+  genes_list <- sort(maf_file@data$Hugo_Symbol)
+  dups_genes <- genes_list[duplicated(x = genes_list)]
+  dups_genes <- unique(dups_genes)
+  #filter
+  only_dups_maf  <- subsetMaf(maf_file, genes = dups_genes)
+  return(only_dups_maf)
+  }
+
+mut_18_hs_dups <- keep_only_dups(mut_18_hs)
+mut_19_hs_dups <- keep_only_dups(mut_19_hs)
+
+#good stats
+mut_18_hs_dups@variant.type.summary
+mut_18_hs_dups@variant.classification.summary
+length(unique(mut_18_hs_dups@data$Hugo_Symbol))
+
+mut_19_hs_dups@variant.type.summary
+mut_19_hs_dups@variant.classification.summary
+length(unique(mut_19_hs_dups@data$Hugo_Symbol))
+
+
+```
+
+# genes that are duplicated 
+```{r}
+mafbarplot(mut_18_hs_dups, color = col, n = 20)
+mafbarplot(mut_19_hs_dups, color = col, n = 20)
+```
+
+
+##
+## analyse genes that are duplicated in both of the samples
+##
+
+```{r}
+# genes_dups_in_both <- unique(mut_18_hs_dups@data[mut_18_hs_dups@data$Hugo_Symbol %in% mut_19_hs_dups@data$Hugo_Symbol])
+# genes_dups_in_both <- unique(genes_dups_in_both$Hugo_Symbol)
+# genes_dups_in_both
+# 
+# mut_18_dups_shared <- subsetMaf(mut_18_hs_dups, genes = genes_dups_in_both)
+# mut_19_dups_shared <- subsetMaf(mut_19_hs_dups, genes = genes_dups_in_both)
+# 
+# par(mfrow=c(1,2))
+# mafbarplot(mut_18_dups_shared, color = col, genes = genes_dups_in_both)
+# mafbarplot(mut_19_dups_shared, color = col, genes = genes_dups_in_both)
+# 
+# 
+# library("VennDiagram")
+# 
+# p <- venn.diagram(
+#   x = list(mut_18_hs_dups@data$Hugo_Symbol,mut_19_hs_dups@data$Hugo_Symbol),
+#   category.names = c("P18", "P19"), filename = "dup_gene_intersection.png", disable.logging = TRUE, main = NULL,
+#   print.mode = c("raw"), sigdigs = 2, main.cex = 1.2, cat.fontface = "bold",
+#   height = 500,  width = 500, units = "px",   resolution = 100,  compression = "lzw",
+#   imagetype = "png",  fill = c(col[1],col[6]),
+#   cex = 1, #size numbers
+#   lty = 'blank', #dotted line
+#   #Set names
+#   cat.cex = 1.1, cat.default.pos = "outer"
+# );
+# 
+# p
+# grid.newpage()
+# grid::grid.draw(p)
+
+```
+![Intersected image](dup_gene_intersection.png)
+
+
+
+###########################
+# Intersect with Database #
+###########################
+```{r}
+#lates version Cosmic V98
+cosmic <- read.csv("../../Cosmic_CancerGeneCensus_v98_GRCh38.tsv", sep = "\t",header = T) 
+cosmic$ENSgene <- sub(".*(ENSG.\\d*).*" , "\\1", cosmic$SYNONYMS) 
+
+#colon <- read.csv("../Census_allTue_Aug_16_15_10_52_2022.tsv", sep = "\t",header = T) 
+
+intersect_with_ref <- function (cancerref, maf_file) {
+  sub <- cancerref[cancerref$GENE_SYMBOL %in% maf_file@data$Hugo_Symbol,] #Gene.Symbol in old db
+  rownames(sub) <- 1:nrow(sub)
+  return(sub)
+  # pcg = dups_genes_mut[dups_genes_mut$BIOTYPE == "protein_coding"]
+  # colon$Gene[colon$Gene.Symbol %in% pcg$Hugo_Symbol] 
+}
+
+
+intersect_with_ref_ensgene<- function (cancerref, maf_file) {
+#todo
+  sub <- cancerref[cancerref$ENSgene %in% maf_file@data$Gene,] #ENSgene
+  rownames(sub) <- 1:nrow(sub)
+  return(sub)
+  # pcg = dups_genes_m
+}
+
+
+colonref_in_18_dups <- intersect_with_ref(mut_18_hs_dups, cancerref = cosmic)
+colonref_in_19_dups <- intersect_with_ref(mut_19_hs_dups, cancerref = cosmic)
+
+
+mut_18_dups_in_colonref <- subsetMaf(mut_18_hs_dups, genes = colonref_in_18_dups$GENE_SYMBOL)
+
+mut_19_dups_in_colonref <- subsetMaf(mut_19_hs_dups, genes = colonref_in_19_dups$GENE_SYMBOL)
+
+head(mut_18_dups_in_colonref@gene.summary)
+head(mut_19_dups_in_colonref@gene.summary)
+
+
+par(mfrow=c(1,2))
+mafbarplot(mut_18_dups_in_colonref, color = col, n=30, showPct = F)
+mafbarplot(mut_19_dups_in_colonref, color = col, n=30, showPct = F)
+
+##shared 18_19 with database
+#genes_dups_in_both_with_db <- genes_dups_in_both[genes_dups_in_both %in% cosmic$GENE_SYMBOL]
+#mut_18_dups_shared_with_db <- subsetMaf(mut_18_hs_dups, genes = genes_dups_in_both_with_db)
+#mut_19_dups_shared_with_db <- subsetMaf(mut_19_hs_dups, genes = genes_dups_in_both_with_db)
+#par(mfrow=c(1,2))
+#mafbarplot(mut_18_dups_shared_with_db, color = col, n = 20)
+#mafbarplot(mut_19_dups_shared_with_db, color = col, n = 20)
+```
+
+
+```{r}
+#plot intersection
+p2 <- venn.diagram(
+  x = list(mut_18_hs_dups@data$Hugo_Symbol,
+           mut_19_hs_dups@data$Hugo_Symbol,
+           cosmic$GENE_SYMBOL
+           ),
+  category.names = c("P18", "P19", "COSMIC"), filename = "H18_H19_Cosmic.png",
+  disable.logging = TRUE, main = NULL,
+  print.mode = c("raw"), sigdigs = 2, main.cex = 1.1, cat.fontface = "bold",
+  height = 800,  width = 800, units = "px",   resolution = 300,  compression = "lzw",
+  imagetype = "png",  fill = c(col[1],col[6],col[8]),
+  cex = 1, #size numbers
+  lty = 'blank', #dotted line
+  #Set names
+  cat.cex = 1.1, cat.default.pos = "outer"
+);
+
+p2
+
+
+```
+![Intersected image with COSMIC](H18_H19_Cosmic.png)
+
+
+```{r}
+mut18_dups_withHP <-  add_HP_to_maf(mut_18_dups_in_colonref)
+mut19_dups_withHP <-  add_HP_to_maf(mut_19_dups_in_colonref)
+
+mut18_dups_withHP <- mut18_dups_withHP@data %>%
+  dplyr::select(c(SYMBOL, Chromosome, Start_Position, End_Position, HP, Variant_Classification))
+
+mut19_dups_withHP <- mut19_dups_withHP@data %>%
+  dplyr::select(c(SYMBOL, Chromosome, Start_Position, End_Position, HP, Variant_Classification))
+
+write.table(mut18_dups_withHP, file = "mut18_dups_withHP.csv", row.names = F)
+write.table(mut19_dups_withHP, file = "mut19_dups_withHP.csv", row.names = F)
+
+```
+
+#Selecting the 3 groups from prrevious plot
+```{r}
+cos_18_19 <- intersect(cosmic$GENE_SYMBOL, 
+          intersect(mut_18_hs_dups@data$Hugo_Symbol,
+                   (mut_19_hs_dups@data$Hugo_Symbol)))
+
+cos_18 <- intersect(cosmic$GENE_SYMBOL,mut_18_hs_dups@data$Hugo_Symbol)
+
+cos_19 <- intersect(cosmic$GENE_SYMBOL,mut_19_hs_dups@data$Hugo_Symbol)
+
+```
+
+
+########################
+## split haplotypes   ##
+## & Plot mutations   ##
+########################
+
+```{r}
+
+commas_to_cols <- function(df, wanted_col = "t_HPA") {
+  wanted = data.frame(base::do.call(rbind, strsplit(df$t_HPA, ",")))
+  wanted = apply(wanted, 2, function(x) as.numeric(as.character(x)))
+  return(wanted)
+}
+
+#genes_dups add cov
+to_plot_hap_mut <- function(maf_file) {
+  if (class(maf_file) == "MAF") {
+    maf_file <- data.frame(maf_file@data)
+  }
+  mut_sample_per_hap <-  rbind(
+    cbind(maf_file[,c("Chromosome", "Start_Position", "End_Position",
+                           "BIOTYPE", "Variant_Classification", "Hugo_Symbol", "Gene")],
+          t_HPA = commas_to_cols(maf_file, "t_HPA")[,1]),
+   #note the minus sign before last column
+    cbind(maf_file[,c("Chromosome", "Start_Position", "End_Position",
+                           "BIOTYPE", "Variant_Classification", "Hugo_Symbol", "Gene")],
+          t_HPA = -commas_to_cols(maf_file, "t_HPA")[,2])
+  )
+
+  names(mut_sample_per_hap) <- c("chr", "start", "end", "btype", "vclass", "Hugo_Symbol" , "ENSGene", "cov")
+  # remove not cov
+
+  mut_sample_per_hap <- mut_sample_per_hap[mut_sample_per_hap$cov!=0,]
+  # make it binary
+  mut_sample_per_hap[mut_sample_per_hap$cov > 0 ,]$cov = 1
+  mut_sample_per_hap[mut_sample_per_hap$cov < 0 ,]$cov = -1
+  return(mut_sample_per_hap)
+}
+
+
+#Here not only the dup
+mut_18_hs_per_hap <- to_plot_hap_mut(mut_18_hs)
+mut_19_hs_per_hap <- to_plot_hap_mut(mut_19_hs) 
+
+#Here are the dup
+mut_18_dups_per_hap <- to_plot_hap_mut(mut_18_hs_dups)
+mut_19_dups_per_hap <- to_plot_hap_mut(mut_19_hs_dups)  
+
+length(unique(mut_18_dups_per_hap$Hugo_Symbol))
+length(unique(mut_19_dups_per_hap$Hugo_Symbol))
+
+length(unique(mut_18_dups_per_hap$Hugo_Symbol))
+length(unique(mut_19_dups_per_hap$Hugo_Symbol))
+
+```
+
+
+#Annotate (we can get the coordinates for plotting)
+```{r}
+# Load transcript meta data
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+
+# Load BSgenome
+library(BSgenome.Hsapiens.UCSC.hg38)
+genome <- BSgenome.Hsapiens.UCSC.hg38
+
+
+# Define a region of interest
+# will be taken as list from biomaRT
+library(biomaRt)
+
+get_genes_gr <- function(genes_list = "", search_col = 1)
+{
+  if(search_col == 1) {
+    search_col = "hgnc_symbol"
+  } else {
+    search_col = "ensembl_gene_id"
+  }
+  regions <- getBM(mart= useMart('ensembl', dataset='hsapiens_gene_ensembl',
+                                 host="https://useast.ensembl.org/"),
+                   attributes=c('hgnc_symbol', 'chromosome_name',
+                                'start_position', 'end_position', 'strand', "ensembl_gene_id"),
+                   filters=search_col, values=genes_list)
+  
+  regions <- regions[regions$chromosome_name %in% c(seq(1,22),"X","Y"),]
+  regions$chromosome_name <- paste0("chr",regions$chromosome_name)
+  regions$strand[regions$strand ==  1] = "+"
+  regions$strand[regions$strand == -1] = "-"
+  
+  
+  gr <- makeGRangesFromDataFrame(df = regions, seqnames.field = "chromosome_name",
+                                 start.field = "start_position",
+                                 end.field = "end_position",
+                                 strand.field = "strand",
+                                 keep.extra.columns = TRUE
+  )
+  return(gr)
+}
+
+```
+
+#plotting
+```{r}
+# choose a gene from the following
+# cos_18
+# cos_19
+# cos_18_19
+
+# select the sample
+# mut_18_dups_per_hap
+# mut_19_dups_per_hap
+
+# Define the data as a list
+
+genCov_1 <- function(list_to_plot = mut_18_dups_per_hap,
+                         wanted_gene = "",
+                         sample_lable = "sample") {
+  #check if the selected gene is mutated
+  if (!(wanted_gene %in% list_to_plot$Hugo_Symbol)) {
+    stop("SELECTED GENE IS NOT MUTATED")
+  }
+  
+  ll <- list(list_to_plot)
+  names(ll) <- sample_lable
+  genCov(x = ll,                                            #list of mutations to plot with 1 and -1 for
+       gr = get_genes_gr(wanted_gene),
+       gene_name = wanted_gene,
+       txdb = txdb, genome = genome, gene_labelTranscript = FALSE,
+       gene_colour = "darkgray")
+}
+
+
+```
+
+###############################
+## Haplotypes Plotting colored
+###############################
+
+```{r}
+
+library(GenVisR)
+
+#Adjusted 2 functions from GenVisR
+mygenCov <- function (x, txdb, gr, genome, reduce = FALSE, gene_colour = NULL, 
+                      gene_name = "Gene", gene_plotLayer = NULL, label_bgFill = "black", #"lightyellow", 
+                      label_txtFill = "white", label_borderFill = "black", label_txtSize = 10, 
+                      lab2plot_ratio = c(1, 10), cov_colour = "blue", cov_plotType = "point", 
+                      cov_plotLayer = NULL, base = c(10, 2, 2), transform = c("Intron", 
+                                                                              "CDS", "UTR"),
+                      gene_labelTranscript = TRUE, gene_labelTranscriptSize = 4, 
+                      gene_isoformSel = NULL, out = "plot", subsample = FALSE) 
+{
+  data <- GenVisR:::genCov_qual(x = x, txdb = txdb, gr = gr, genome = genome)
+  x <- data$x
+  txdb <- data$txdb
+  gr <- data$gr
+  genome <- data$genome
+  gp_result <- GenVisR:::geneViz(txdb, gr, genome, reduce = reduce, gene_colour = gene_colour, 
+                                 base = base, transform = transform, isoformSel = gene_isoformSel, 
+                                 labelTranscriptSize = gene_labelTranscriptSize, labelTranscript = gene_labelTranscript, 
+                                 plotLayer = gene_plotLayer)
+  gene <- gp_result$plot 
+  #only gene without cov
+  #return(gene)
+  gene_list <- list()
+  gene_list[[gene_name]] <- gene
+  test2 <- function(x, min, max) {
+    idx <- -which(x$end <= min | x$end >= max)
+    if (length(idx)) {
+      x <- x[idx, ]
+    }
+    return(x)
+  }
+  coverage_data <- lapply(x, test2, start(gr), end(gr))
+  xlimits <- c(start(gr), end(gr))
+  display_x_axis <- TRUE
+  if (!is.null(transform) && length(transform) > 0) {
+    master <- gp_result$master
+    test <- function(x) {
+      x$start <- x$end
+      return(x)
+    }
+    coverage_data <- lapply(coverage_data, test)
+    message("Mapping coverage data onto transformed gene-space")
+    coverage_data <- lapply(coverage_data, geneViz_mapCovCoordSpace, 
+                            master = master)
+    for (i in 1:length(coverage_data)) {
+      coverage_data[[i]] <- coverage_data[[i]][, c("trans_start", 
+                                                   "trans_end", "cov")]
+      colnames(coverage_data[[i]]) <- c("start", "end", 
+                                        "cov")
+    }
+    start <- cbind(GenomicRanges::start(gr), GenomicRanges::start(gr))
+    end <- cbind(GenomicRanges::end(gr), GenomicRanges::end(gr))
+    temp <- as.data.frame(rbind(start, end))
+    colnames(temp) <- c("start", "end")
+    temp <- plyr::adply(temp, 1, geneViz_mapCoordSpace, master = master)
+    xlimits <- c(min(temp$trans_start), max(temp$trans_end))
+    display_x_axis <- FALSE
+  }
+  if (subsample) {
+    transform.coordinates <- function(master_row, x, tx.graph.width) {
+      lt <- x$start <= master_row$trans_end
+      gt <- x$end >= master_row$trans_start
+      idx = which(lt & gt)
+      x.sub <- x[idx, ]
+      width <- dim(x.sub)[1]
+      adjusted.width <- round(1000 * (master_row$width/tx.graph.width))
+      if (width > adjusted.width) {
+        s <- seq.int(from = 1, to = width, length.out = adjusted.width)
+        x.sub <- x.sub[s, ]
+      }
+      return(x.sub)
+    }
+    perform_subsample <- function(x, master) {
+      tx.graph.width <- sum(master$width)
+      y <- plyr::adply(master, 1, transform.coordinates, 
+                       x = x, tx.graph.width = tx.graph.width)
+      y
+    }
+    coverage_data <- lapply(coverage_data, perform_subsample, 
+                            master = master)
+  }
+  coverage_plot <- lapply(coverage_data, mygenCov_buildCov, colour = cov_colour, 
+                          plot_type = cov_plotType, x_limits = xlimits, display_x_axis = display_x_axis, 
+                          layers = cov_plotLayer)
+  
+  merged_data <- c(gene_list, coverage_plot)
+  track_coverage_plot <- GenVisR:::genCov_trackViz(merged_data, gene_name = gene_name, 
+                                                   bgFill = label_bgFill, textFill = label_txtFill, border = label_borderFill, 
+                                                   size = label_txtSize, axis_align = "width", widthRatio = lab2plot_ratio, 
+                                                   list = TRUE)
+  output <- GenVisR:::multi_selectOut(data = merged_data, plot = track_coverage_plot, 
+                                      draw = TRUE, out = out)
+  return(output)
+}
+
+
+mygenCov_buildCov <- function(data_frame, x_limits=NULL, display_x_axis=TRUE,
+                              colour="blue", plot_type="point", layers=NULL, color_keys = col)
+{
+  # Specify various parameters of the plot
+  line <- geom_line(colour=colour)
+  bar <- geom_bar(fill=colour, width=1, stat="identity")
+  
+  # Map the colors
+  #way0: single color, from original function
+  # point <- geom_point(fill=colour, colour=colour) 
+  
+  #way1: extract translate the name to color in the keys
+  # col_by_type <- plyr::mapvalues(data_frame$vclass, from = names(color_keys), to = c(matrix(color_keys)) )
+  # point <- geom_point(fill=col_by_type, colour=col_by_type) 
+  
+  #way2: map the factor in the sample, note that you add the
+  #      key color scale_colour_manual to the plot
+  point <- geom_point(aes(colour = factor(data_frame$vclass))) 
+  
+  if(is.null(x_limits))
+  {
+    x_limits <- xlim(c(min(data_frame$end), max(data_frame$end)))
+  } else {
+    x_limits <- xlim(x_limits)
+  }
+  
+  if(!is.null(layers))
+  {
+    layers <- layers
+  } else {
+    layers <- geom_blank()
+  }
+  
+  # Define the theme
+  if(display_x_axis == TRUE)
+  {
+    theme <- theme(axis.title.x=element_blank(),
+                   legend.position = "none", #"bottom",
+                   #legend.direction = "horizontal",
+                   legend.title = element_text(size = 5),
+                   legend.text = element_text(size = 5)
+    )
+  } else {
+    theme <- theme(axis.title.x=element_blank(),
+                   axis.text.x=element_blank(),
+                   axis.ticks.x=element_blank(),
+                   legend.position = "none", #"bottom",
+                   #legend.direction = "horizontal",
+                   legend.title = element_text(size = 5),
+                   legend.text = element_text(size = 5)
+    )
+  }
+  
+  
+  # Define y label
+  y_label <- ylab("Haplotype")
+  
+  # Define the main plot
+  cov_plot <- ggplot(data_frame, aes_string(x='end', y='cov')) + x_limits +
+    theme_bw() + theme + y_label + layers  + scale_y_continuous(breaks = c(1,-1)) +
+    scale_colour_manual(values = color_keys) +
+    labs(color='MUTATION GROUP') 
+  
+  # Define Control structure for plot type
+  if(toupper(plot_type) == "LINE")
+  {
+    cov_plot <- cov_plot + line
+  } else if(toupper(plot_type) == "BAR"){
+    cov_plot <- cov_plot + bar
+  } else if(toupper(plot_type) == "POINT") {
+    cov_plot <- cov_plot + point
+  } else {
+    memo <- paste0("Do not recoginze: ", plot_type,
+                   ", please specify 'line', 'point' or 'bar'")
+    stop(memo)
+  }
+  
+  return(cov_plot)
+}
+
+```
+
+
+
+```{r, echo=NULL}
+#plotting
+
+#gr <- get_genes_gr(genes_dups_in_both)
+
+#fulll gr
+genes_dups_in_any <- unique(c(mut_18_hs_dups@data$Hugo_Symbol, mut_19_hs_dups@data$Hugo_Symbol))
+gr <- get_genes_gr(genes_dups_in_any)
+grA <- get_genes_gr("APC")
+
+#genCov_1(mut_18_dups_per_hap, "APC", "P18")
+#genCov_1(mut_19_dups_per_hap, "APC", "P19")
+
+```
+
+#Make the pdf plot
+```{r, fig.width = 8, fig.height=4}
+# Create Data for input
+cov_input_A <- mut_18_dups_per_hap
+cov_input_B <- mut_19_dups_per_hap
+
+# Define the data as a list
+data <- list(`P18` = cov_input_A, `P19` = cov_input_B)
+
+pdf("APC_full.pdf", width = 8, height = 3)
+
+mygenCov(data[2], txdb, grA , genome, transform = NULL, base = NULL,
+       gene_labelTranscript = T, gene_name = "APC",
+       gene_colour = "black",label_bgFill = "#b4c6e8ff", label_txtFill = "black", out = "plot",
+       gene_labelTranscriptSize = 0.5)
+dev.off()
+
+#subsetByOverlaps(exons(txdb), gene_to_plot)
+
+
+```
+
+#Plotting with zoom
+
+```{r, fig.width = 8, fig.height=3}
+WANTED_GENE = "APC" 
+gene_to_plot = grA[grA$hgnc_symbol==WANTED_GENE]
+# The two mutations position in P19 are: 112837805, 112839942
+# To zoom to the mutations, add the following line:
+gene_to_plot@ranges = IRanges(start = 112837000, width = 4000)
+pdf("APC_mutations.pdf", width = 8, height = 3)
+
+mygenCov(data[2], txdb, gene_to_plot , genome, transform = NULL, base = NULL,
+         gene_labelTranscript = FALSE, gene_name = gene_to_plot$hgnc_symbol,
+         gene_colour = "black",label_bgFill = "#b4c6e8ff", label_txtFill = "black" )
+dev.off()
+```
+
+
+```{r}
+####################
+### plot legends ###
+####################
+
+plot(NULL ,xaxt='n',yaxt='n',bty='n',ylab='',xlab='', xlim=0:1, ylim=0:1)
+legend("topleft", legend =names(col), pch=16, pt.cex=1, cex=1, bty='n',
+       col = col)
+mtext("Groups", at=0.2, cex=1)
+p1 <- recordPlot()
+plot.new()
+
+```
+
+#####################################################
+### plot GENES with their mutations in HP context ###
+#####################################################
+
+```{r, fig.width = 8, fig.height=4}
+
+#Adjusted function to plot genes with their mutations in HP context
+
+filter_to_region <- function(mylist, region){
+  filtered_18 <- makeGRangesFromDataFrame(mylist[[1]],keep.extra.columns = T,seqnames.field = "chr", start.field = "start", end.field = "end")
+  filtered_19 <- makeGRangesFromDataFrame(mylist[[2]],keep.extra.columns = T,seqnames.field = "chr", start.field = "start", end.field = "end")
+  
+  filtered_18 <- data.frame ( subsetByOverlaps(filtered_18, region) )
+  filtered_19 <- data.frame ( subsetByOverlaps(filtered_19, region) )
+  
+  filtered <- list(`P18`=filtered_18 ,`P19`=filtered_19) 
+  return(filtered)
+}
+
+#genes_dups_in_both_with_db
+plot_gene <- function (WANTED_GENE = "LRP1B", loc=NULL) {
+  gene_to_plot = gr[gr$hgnc_symbol==WANTED_GENE]
+  
+  new_data <- filter_to_region (data, gene_to_plot)
+  
+  print(new_data)
+  #keep only wanted chr
+   if (!is.null(loc)) {
+    start = as.numeric(strsplit(loc,"-")[[1]][1])
+    end = as.numeric(strsplit(loc,"-")[[1]][2]) - start 
+    
+    gene_to_plot@ranges = IRanges(start = start, width = end)
+    mygenCov(new_data, txdb, gene_to_plot , genome, transform = NULL, base = NULL,
+         gene_labelTranscript = FALSE, gene_name = gene_to_plot$hgnc_symbol,
+         gene_colour = "black",label_bgFill = "#b4c6e8ff", label_txtFill = "black" )
+    
+  } else {
+      mygenCov(new_data, txdb, gene_to_plot , genome, transform = NULL, base = NULL,
+      gene_labelTranscript = FALSE, gene_name = gene_to_plot$hgnc_symbol,
+      gene_colour = "black",label_bgFill = "#b4c6e8ff", label_txtFill = "black",label_txtSize = 5)
+  }
+
+}
+
+plot_gene("CNTNAP2")
+# plot_gene("PTPRD")
+#plot_gene("ERBB4", loc = "211740000-211760000")
+```
+
+
+###########################
+# Count SMs per haplotype #
+###########################
+
+#This will be needed in the next section
+
+```{r}
+# Assign double or single tags
+count_mut_per_gene <- function (mut_list) {
+  #https://stackoverflow.com/questions/70442161/
+  #how many mutations
+  mut_count_all <- mut_list %>% count(Hugo_Symbol, ENSGene, name="all_gene_mut")
+  #mutaions per allele
+  mut_count_hp  <- mut_list %>% count(Hugo_Symbol, cov, name="per_hp")
+  #make single matrix
+  mut_per_gene <- merge(mut_count_hp, mut_count_all, by="Hugo_Symbol")
+  
+  mut_per_gene <- mut_per_gene[order(mut_per_gene$all_gene_mut,decreasing = T),]
+  
+  mut_per_gene$type <- "double"
+  mut_per_gene$type[mut_per_gene$all_gene_mut == mut_per_gene$per_hp]  <- "single"
+  
+  return(mut_per_gene)
+}
+
+
+count_mut_18 <- count_mut_per_gene(mut_18_dups_per_hap)
+count_mut_19 <- count_mut_per_gene(mut_19_dups_per_hap)
+length(unique(count_mut_18$Hugo_Symbol))
+length(unique(count_mut_19$Hugo_Symbol))
+
+#counts for double
+dim(unique(count_mut_18 %>% filter(type=="single") %>% dplyr::select(Hugo_Symbol)))
+dim(unique(count_mut_19 %>% filter(type=="single") %>% dplyr::select(Hugo_Symbol)))
+
+
+#add granges annotations
+add_ranges_of_genes <- function (count_granges) {
+  count_granges_loci <- data.frame( get_genes_gr(count_granges$ENSGene, search_col = 2 ) ) 
+
+  colnames(count_granges_loci)[6:7] = c("hgnc_symbol","ENSGene")
+
+  labeled <- merge(count_granges, count_granges_loci, by="ENSGene", all=T)
+
+  labeled <- labeled[order(labeled$all_gene_mut,decreasing = T),]
+}
+
+count_mut_18_with_loci <- add_ranges_of_genes(count_mut_18)
+count_mut_19_with_loci <- add_ranges_of_genes(count_mut_19)
+length(unique(count_mut_18_with_loci$Hugo_Symbol))
+length(unique(count_mut_19_with_loci$Hugo_Symbol))
+
+#counts for double afterlable
+dim(unique(count_mut_18_with_loci %>% filter(type=="single") %>% dplyr::select(Hugo_Symbol)))
+dim(unique(count_mut_19_with_loci %>% filter(type=="single") %>% dplyr::select(Hugo_Symbol)))
+
+
+write.table(count_mut_18_with_loci, file = "count_mut_18_labeled.csv", sep = "\t", quote = F, col.names = T, row.names = F)
+write.table(count_mut_19_with_loci, file = "count_mut_19_labeled.csv", sep = "\t", quote = F, col.names = T, row.names = F)
+
+
+```
+
+
+```{r}
+count_mut_18_with_loci_s <- count_mut_18_with_loci %>% filter(type=="single")  
+count_mut_19_with_loci_s <- count_mut_19_with_loci %>% filter(type=="single") 
+
+intersect(count_mut_18_with_loci_s$Hugo_Symbol, count_mut_19_with_loci_s$Hugo_Symbol)
+```
+
+
+
+
+##############################################################
+### Plot whole Chromosome with mutated genes in 1 or 2 HPS ###
+##############################################################
+
+```{r}
+# plot Copy numbers per chromosome, and color the gene if it has single or multiple mutations
+
+library(karyoploteR)
+library(CopyNumberPlots)
+library(tidyverse)
+library(tidyr)
+
+read_cna <- function(cnapath) {
+  cna <- read.table(cnapath, header = T, quote = "\t")
+  #cna <- na.omit(cna)
+  cna <- makeGRangesFromDataFrame(df = cna,
+                                  seqnames.field = "chr",
+                                  start.field = "Position",
+                                  end.field = "Position",
+                                  keep.extra.columns = T)
+  return(cna)
+}
+
+cna_p18 <- read_cna ("/PATH/TO/P18/results/titan/titanCNA_ploidy3/tumor_sample_1_cluster2.titan.txt")
+cna_p18 <- cna_p18[,c("Corrected_Ratio", "PhaseSet", "LogRatio", "Corrected_logR", "Corrected_Copy_Number")]
+
+#cna_p19 <- read_cna ("/PATH/TO/P19/results/titan/titanCNA_ploidy3/tumor_sample_1_cluster2.titan.txt")
+#cna_p19 <- cna_p19[,c("Corrected_Ratio", "PhaseSet", "LogRatio", "Corrected_logR", "Corrected_Copy_Number")]
+
+```
+
+
+```{r}
+#csv files are generated from a previous step.
+muts_18 <- read.table("/PATH/TO/count_mut_18_labeled.csv", sep = "\t", header = T)
+# muts_19 <- read.table("/PATH/TO/count_mut_19_labeled.csv", sep = "\t", header = T)
+
+#remove HP related cols
+muts_18 <- muts_18[!(colnames(muts_18) %in% c("cov", "per_hp","hgnc_symbol"))]
+
+#check
+#muts_18 %>% filter(seqnames == "chr8") %>% arrange(start)
+
+muts_18 <- muts_18 %>% filter(all_gene_mut>=2) %>% dplyr::distinct(Hugo_Symbol, .keep_all = T)
+  
+muts_18 <- muts_18[!is.na(muts_18$end),]
+
+muts_18 <- makeGRangesFromDataFrame(muts_18, keep.extra.columns = T, start.field = "start",
+                         end.field = "end", seqnames.field = "seqnames")
+loc = "chr8"
+  if (grepl("-", loc[1], fixed = T)) {
+    loc <- toGRanges(loc)
+    kp  <- plotKaryotype(genome = "hg38", zoom =loc, plot.type = 3)
+  } else {
+    kp  <- plotKaryotype(genome = "hg38", chromosomes=loc, plot.type = 3)
+  }
+
+plotLRR(kp, cna_p18 , out.of.range = "points", lrr.column = "LogRatio", points.cex = 0.4,
+          ymax = 4, ymin= -4,  points.col = "lightblue", labels = NA)
+
+muts_18$color <- NA
+muts_18[muts_18$type=="single"]$color <- "red"
+muts_18[muts_18$type=="double"]$color <- "darkgreen"
+
+
+kpPlotMarkers(kp, data=muts_18, label.color = muts_18$color,
+                labels = muts_18$Hugo_Symbol, label.margin=0.5, data.panel = 2)
+ 
+```
+
+

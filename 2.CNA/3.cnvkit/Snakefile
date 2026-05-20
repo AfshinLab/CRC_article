@@ -1,0 +1,260 @@
+import pandas as pd
+import matplotlib
+from matplotlib import pyplot as plt
+import cnvlib
+
+matplotlib.use("Agg")
+
+
+# Path to Titan data
+titan_path = "../../CNV/Titan/"
+
+# Path to ASCAT data
+ascat_path = "../../CNV/ASCAT/"
+
+# Path to RNA-seq counts
+rna_data="../../RNA-seq/wanted.samples.RNA.csv"
+
+# From https://raw.githubusercontent.com/etal/cnvkit/master/data/ensembl-gene-info.hg38.tsv
+gene_info="ensembl-gene-info.hg38.tsv"
+
+# From https://raw.githubusercontent.com/etal/cnvkit/master/data/tcga-skcm.cnv-expr-corr.tsv
+cnv_corr="tcga-skcm.cnv-expr-corr.tsv"
+
+patients = ["P18", "P19"]
+samples = ["T", "N"]
+
+rule all:
+    input:
+        expand("out/heatmap.{patient}.pdf", 
+               patient=patients),
+        expand("out/{patient}.ascat.chr1_X.seg", patient=patients),
+        expand("out/{patient}.titan.chr1_X.seg", patient=patients),
+        expand("out/{patient}_T.centered.chr1_X.seg", patient=patients),
+        "out/heatmap.pdf", 
+
+
+rule get_ensamble_gene_info:
+    output:
+        data = gene_info
+    shell:
+        "wget https://raw.githubusercontent.com/etal/cnvkit/master/data/ensembl-gene-info.hg38.tsv"
+
+
+rule get_tcga_skcm:
+    output:
+        data = cnv_corr
+    shell:
+        "wget https://raw.githubusercontent.com/etal/cnvkit/master/data/tcga-skcm.cnv-expr-corr.tsv"
+
+
+rule copy_logratios_titan:
+    output: 
+        seg = "{patient}.titan.seg",
+    params:
+        data = f"{titan_path}/{{patient}}/results/titan/titanCNA_ploidy3/tumor_sample_1_cluster2.titan.ichor.seg.txt"
+    run:
+        df = pd.read_csv(params.data, sep="\t")
+        df.to_csv(output.seg, sep="\t", index=False)
+
+        df = df[["Sample", "Chromosome", "Start", "End", "Length.snp.", "Median_logR"]]
+        df.columns = ["sample", "chromosome", "start", "end", "num.snps", "median.logR"]
+        df["sample"] = f"{wildcards.patient}.titan"
+        df.to_csv(output.seg, sep="\t", index=False, header=True)
+
+
+rule copy_logratios_ascat:
+    output: 
+        logr = "{patient}.ascat.logr",
+    params:
+        data = f"{ascat_path}/{{patient}}/logR.LogR.PCFed.txt"
+    shell:
+        "cp {params.data} {output.logr}"
+
+
+rule convert_logr_seg_ascat:
+    input:
+        logr = "{patient}.ascat.logr",
+    output:
+        seg = "{patient}.ascat.seg"
+    run:
+        def extract(line):
+            coord, logr = line.strip().split("\t")
+            chrom, pos = coord.strip('"').split(":")
+            return chrom, int(pos), float(logr)
+
+        sample_name = f"{wildcards.patient}.ascat"
+        with open(input.logr) as reader, open(output.seg, "w") as writer:
+            print("sample", "chromosome", "start", "end", "num.snps", "median.logR", sep="\t", file=writer)
+            current_chrom, current_start, current_logr = extract(next(reader))
+            current_end = current_start
+            num_snps = 1
+
+            for line in reader:
+                chrom, pos, logr = extract(line)
+
+                if chrom != current_chrom or logr != current_logr:
+                    print(sample_name, current_chrom, current_start, current_end, num_snps, current_logr, sep="\t", file=writer)
+                
+                    current_chrom = chrom
+                    current_start = pos
+                    current_logr = logr
+                    num_snps = 0
+                
+                current_end = pos
+                num_snps += 1
+
+            print(sample_name, current_chrom, current_start, current_end, num_snps, current_logr, sep="\t", file=writer)
+
+
+rule import_seg:
+    input:
+        seg = "{patient}.{tool}.seg"
+    output:
+        cns = "out/{patient,\w+}.{tool,\w+}.cns"
+    params:
+        chrom_map = ",".join([f"chr{i}:{i}" for i in list(range(1,23)) + ["X"]])
+    shell:
+        "cnvkit.py import-seg"
+        " {input.seg}"
+        " --chromosomes {params.chrom_map}"
+        " -d out"
+
+
+rule get_rna_counts:
+    output:
+        counts = "{sample}.counts"
+    params:
+        data = rna_data
+    run:
+        column_translate = {
+            "P18_T": "T18",
+            "P19_T": "T19",
+            "P18_N": "N18_Proximal",
+            "P19_N": "N19_Proximal",
+        }
+        df = pd.read_csv(params.data, skiprows=[0,1,3,4,5])
+        out = df[["User_ID", column_translate[wildcards.sample]]]
+        out.to_csv(output.counts, sep="\t", index=False, header=False)
+
+
+rule import_rna:
+    # Docs https://cnvkit.readthedocs.io/en/stable/rna.html
+    input:
+        tumor = expand("{patient}_T.counts", patient=patients),
+        normal = expand("{patient}_N.counts", patient=patients),
+        resource = gene_info,
+        correlations = cnv_corr,
+    output:
+        summary = "out-summary.tsv",
+        results = directory("out"),
+        cnr = expand("out/{patient}_{sample}.cnr", patient=patients, sample=samples),
+    log: "import_rna.log"
+    shell:
+        "cnvkit.py import-rna"
+        " {input.tumor}"
+        " --format counts"
+        " --normal {input.normal}"
+        " --gene-resource {input.resource}"
+        " --correlations {input.correlations}"
+        " --output {output.summary}"
+        " --output-dir {output.results}"
+        " 2> {log}"
+
+
+rule segment_cbs:
+    input:
+        cnr = "out/{patient}_{sample}.cnr",
+    output:
+        cns = "out/{patient,\w+}_{sample,\w+}.cns",
+    log: "out/{patient}_{sample}.cns.log"
+    shell:
+        "cnvkit.py segment"
+        " {input.cnr}"
+        " -m cbs"
+        " --output {output.cns}"
+        " 2> {log}"
+
+
+rule center:
+    # https://github.com/etal/cnvkit/issues/352 
+    input:
+        cns = "out/{patient}_{sample}.cns",
+    output:
+        centered = "out/{patient}_{sample}.centered.cns",
+    shell:
+        "cnvkit.py call"
+        " {input.cns}"
+        " -m none"
+        " --center"
+        " -o {output.centered}"
+
+
+rule get_chr1_to_X:
+    input:
+        cns = "{file}.cns",
+    output:
+        cns = "{file}.chr1_X.cns",
+    shell:
+        "grep -vE '^(MT|Y|CHR_.*)' {input.cns} > {output.cns}"
+
+
+rule heatmap_patient_custom:
+    input:
+        cns_ascat = "out/{patient}.ascat.chr1_X.cns",
+        cns_titan = "out/{patient}.titan.chr1_X.cns",
+        cns = "out/{patient}_T.centered.chr1_X.cns",
+    output:
+        pdf = "out/heatmap.{patient}.pdf",
+        png = "out/heatmap.{patient}.png",
+    log: "out/heatmap.{patient}.pdf.log"
+    run:
+        sample_ids = ["WGS (ASCAT)", "WGS (Titan)", "RNA (CNVkit)"]
+        segs = [cnvlib.read(f, sample_id) for f, sample_id in zip(input, sample_ids)]
+
+        fig, ax = plt.subplots(figsize=(12, 3))
+        ax = cnvlib.do_heatmap(segs, do_desaturate=True, ax=ax)
+        plt.savefig(output.pdf, bbox_inches="tight")
+        plt.savefig(output.png, bbox_inches="tight", dpi=300)
+
+
+rule heatmap_all_custom:
+    input:
+        cns_titan = expand("out/{patient}.titan.chr1_X.cns", patient=patients),
+        cns_ascat = expand("out/{patient}.ascat.chr1_X.cns", patient=patients),
+        cns = expand("out/{patient}_T.centered.chr1_X.cns", patient=patients),
+    output:
+        pdf = "out/heatmap.pdf",
+        png = "out/heatmap.png",
+    log: "out/heatmap.pdf.log"
+    params:
+        patients = patients,
+    run:
+        samples = {
+            "WGS (Titan)": input.cns_titan, 
+            "WGS (ASCAT)": input.cns_ascat,
+            "RNA (CNVkit)": input.cns,
+        }
+
+        fig, axes = plt.subplots(nrows=len(patients), figsize=(12, 1 * len(samples)))
+        sample_ids = list(samples.keys())
+        for (index, patient), ax in zip(enumerate(params.patients), axes.ravel()):
+            segs = [cnvlib.read(files[index], sample_id) for sample_id, files in samples.items()]
+            ax = cnvlib.do_heatmap(segs, do_desaturate=True, ax=ax)
+            ax.set_ylabel(patient, rotation=0, ha="right", va="center", fontsize=12)
+            if index != len(patients) - 1:
+                ax.set_xticks([])
+
+        plt.savefig(output.pdf, bbox_inches="tight")
+        plt.savefig(output.png, bbox_inches="tight", dpi=300)
+
+
+rule export_seg:
+    input:
+        cns = "out/{patient}.{file}.cns",
+    output:
+        seg = "out/{patient}.{file}.seg",
+    shell:
+        "cnvkit.py export seg"
+        " {input.cns}"
+        " -o {output.seg}"
